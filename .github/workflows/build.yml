@@ -48,7 +48,19 @@ jobs:
           W=$HOME/mt7902-build; cd $W
           git clone --depth 1 -b backport https://github.com/hmtheboy154/mt7902
           cd mt7902
-          make KSRC=$W/linux-$KVER KVER=$KVER
+          # o driver exporta simbolos mt76/mt7921 que ja estao no crcs.txt do Batocera:
+          # remove os duplicados do Module.symvers e tenta de novo
+          SYM=$W/linux-$KVER/Module.symvers
+          for i in 1 2 3 4; do
+            rc=0
+            make KSRC=$W/linux-$KVER KVER=$KVER > build.log 2>&1 || rc=$?
+            if [ "$rc" = "0" ]; then echo "make OK (tentativa $i)"; break; fi
+            grep -oE "'[A-Za-z0-9_]+' exported twice" build.log | tr -d "'" | awk '{print $1}' | sort -u > dup.txt
+            if [ ! -s dup.txt ]; then echo "falha sem simbolos duplicados; ultimas linhas:"; tail -n 60 build.log; exit 1; fi
+            echo "tentativa $i: removendo $(wc -l < dup.txt) simbolos duplicados do Module.symvers"
+            awk -F'\t' 'NR==FNR{d[$1]=1;next} !($2 in d)' dup.txt $SYM > $SYM.new && mv $SYM.new $SYM
+          done
+          test "$rc" = "0" || { echo "make ainda falha; ultimas linhas:"; tail -n 60 build.log; exit 1; }
           mkdir -p $W/pack/modules $W/pack/firmware/mediatek
           cp *.ko $W/pack/modules/
           cp firmware/*.bin $W/pack/firmware/mediatek/
