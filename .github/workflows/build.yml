@@ -13,14 +13,36 @@ jobs:
         run: sudo apt-get update -y && sudo apt-get install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git xz-utils wget zstd kmod
       - name: Compilar
         run: |
+          set -e
           KVER=6.18.16
           W=$HOME/mt7902-build; mkdir -p $W; cd $W
+          # config e patches do Batocera 43 (NAO usar master: la o kernel ja e 7.x)
+          OK=""
+          for ref in 43 v43 43.1 v43.1; do
+            rm -rf bat
+            if git clone --depth 1 --filter=blob:none --no-checkout -b $ref https://github.com/batocera-linux/batocera.linux bat 2>/dev/null; then
+              OK=$ref; break
+            fi
+          done
+          if [ -z "$OK" ]; then
+            echo "ERRO: nao achei o branch/tag do Batocera 43. Opcoes existentes:"
+            git ls-remote --heads --tags https://github.com/batocera-linux/batocera.linux | grep -E "refs/(heads|tags)/v?4[0-9]" || true
+            exit 1
+          fi
+          echo "Usando ref: $OK"
+          cd bat
+          git sparse-checkout set board/batocera/x86 configs
+          git checkout
+          grep -h "KERNEL_CUSTOM_VERSION_VALUE" configs/*x86_64*.board || true
+          cd $W
           wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz
           tar xf linux-$KVER.tar.xz
-          wget -qO linux-$KVER/.config https://raw.githubusercontent.com/batocera-linux/batocera.linux/master/board/batocera/x86/linux_x86_64-defconfig.config
           cd linux-$KVER
-          make olddefconfig
-          scripts/config -d DEBUG_INFO_BTF -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_DWARF5 -e DEBUG_INFO_NONE || true
+          for p in $(find $W/bat/board/batocera/x86/linux_patches -type f \( -name '*.patch' -o -name '*.diff' \) | sort); do
+            echo "patch: $p"
+            patch -p1 --no-backup-if-mismatch < $p
+          done
+          cp $W/bat/board/batocera/x86/linux_x86_64-defconfig.config .config
           make olddefconfig
           grep -E "^CONFIG_(MODVERSIONS|MODULE_SIG|LOCALVERSION|PREEMPT_DYNAMIC|MAC80211|CFG80211)" .config || true
           make -j$(nproc) vmlinux modules
@@ -31,6 +53,7 @@ jobs:
           mkdir -p $W/pack/modules $W/pack/firmware/mediatek
           cp *.ko $W/pack/modules/
           cp firmware/*.bin $W/pack/firmware/mediatek/
+          modprobe --dump-modversions $W/pack/modules/mt7902e.ko | sort > $W/pack/crcs.txt || true
           cd $W && tar cf mt7902-pack.tar -C pack .
           echo "=== RESULTADO ==="; tar tf mt7902-pack.tar
           for f in pack/modules/*.ko; do echo "$f"; modinfo -F vermagic $f; modinfo -F depends $f; done
