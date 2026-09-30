@@ -1,0 +1,41 @@
+name: Build MT7902
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - name: Liberar espaco
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Dependencias
+        run: sudo apt-get update -y && sudo apt-get install -y build-essential bc bison flex libelf-dev libssl-dev dwarves git xz-utils wget zstd kmod
+      - name: Compilar
+        run: |
+          KVER=6.18.16
+          W=$HOME/mt7902-build; mkdir -p $W; cd $W
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$KVER.tar.xz
+          tar xf linux-$KVER.tar.xz
+          wget -qO linux-$KVER/.config https://raw.githubusercontent.com/batocera-linux/batocera.linux/master/board/batocera/x86/linux_x86_64-defconfig.config
+          cd linux-$KVER
+          make olddefconfig
+          scripts/config -d DEBUG_INFO_BTF -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_DWARF5 -e DEBUG_INFO_NONE || true
+          make olddefconfig
+          grep -E "^CONFIG_(MODVERSIONS|MODULE_SIG|LOCALVERSION|PREEMPT_DYNAMIC|MAC80211|CFG80211)" .config || true
+          make -j$(nproc) vmlinux modules
+          cd $W
+          git clone --depth 1 -b backport https://github.com/hmtheboy154/mt7902
+          cd mt7902
+          make KSRC=$W/linux-$KVER KVER=$KVER
+          mkdir -p $W/pack/modules $W/pack/firmware/mediatek
+          cp *.ko $W/pack/modules/
+          cp firmware/*.bin $W/pack/firmware/mediatek/
+          cd $W && tar cf mt7902-pack.tar -C pack .
+          echo "=== RESULTADO ==="; tar tf mt7902-pack.tar
+          for f in pack/modules/*.ko; do echo "$f"; modinfo -F vermagic $f; modinfo -F depends $f; done
+          mkdir -p $GITHUB_WORKSPACE/out && cp mt7902-pack.tar $GITHUB_WORKSPACE/out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mt7902-pack
+          path: out/mt7902-pack.tar
