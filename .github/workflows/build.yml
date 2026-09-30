@@ -34,8 +34,13 @@ jobs:
 
           # injeta os CRCs reais extraidos do Batocera em execucao (crcs.txt do repo)
           test -f "$GITHUB_WORKSPACE/crcs.txt" || { echo "crcs.txt nao encontrado no repo"; exit 1; }
-          awk '{printf "%s\t%s\tvmlinux\tEXPORT_SYMBOL\n", $1, $2}' "$GITHUB_WORKSPACE/crcs.txt" > Module.symvers
+          # formato exigido pelo modpost do 6.18: crc<TAB>simbolo<TAB>modulo<TAB>tipo<TAB>namespace (5 campos; namespace vazio, mas o TAB final e obrigatorio)
+          awk 'NF>=2 { c=$1; if (c !~ /^0x/) c="0x" c; printf "%s\t%s\tvmlinux\tEXPORT_SYMBOL\t\n", c, $2 }' "$GITHUB_WORKSPACE/crcs.txt" > Module.symvers
           wc -l Module.symvers
+          head -3 Module.symvers | cat -A
+          BAD=$(awk -F'\t' 'NF!=5' Module.symvers | wc -l)
+          echo "linhas invalidas no Module.symvers: $BAD"
+          test "$BAD" = "0" || { echo "Module.symvers com formato invalido"; exit 1; }
 
       - name: Compilar driver mt7902
         run: |
